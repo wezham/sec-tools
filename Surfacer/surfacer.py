@@ -6,18 +6,24 @@ import time
 from fuzzywuzzy import fuzz
 from urllib.parse import urlparse
 import pdb
+import re
 
+total_fuzz = []
 class ComparableUrl:
-    def __init__(self, url):
-        self.url = url
+    def __init__(self, url, base):
+        self.url = self.edit_url(url, base)
     def __eq__(self, other):
-        pdb.set_trace()
         me = urlparse(self.url)
-        other_one = url_parse(other.url)
+        other_one = urlparse(other.url)
         try:
-            if fuzz.ratio(me.geturl(), other_one.geturl()) > 1 and fuzz.ratio(starting_url, me.get_url()) > 1:
+            if self.url == "#":
+                return False
+            fuzz_brah = fuzz.ratio(self.url, other.url)
+            total_fuzz.append(fuzz_brah)
+            if fuzz_brah > 60 and root_asset in self.url:
                 return True
             else:
+                print(self.url)
                 return False
         except:
             print("Exception")
@@ -25,12 +31,23 @@ class ComparableUrl:
     def __hash__(self):
         return hash(self.url)
 
+    def edit_url(self, url, base):
+        if re.match(r'^/.*', url) != None:
+            if re.match(r'.*/$', base) != None and re.match(r'^/', url) != None:
+                replaced = url.replace("/", "")
+                url = base + replaced
+            else:
+                url = base + url
+        return url
+
 if len(sys.argv) == 1:
-    print("Usage python surfacer.py [URL] [MAXCRAWLCOUNT]")
+    print("Usage python surfacer.py [URL] [ROOT] [MAXCRAWLCOUNT]")
     exit()
 
 starting_url = sys.argv[1]
-max_crawl_count = sys.argv[2]
+root_asset = sys.argv[2]
+max_crawl_count = sys.argv[3]
+
 failed_to_crawl = []
 
 print(f"Crawling from url {starting_url}")
@@ -74,7 +91,7 @@ def initialise_crawl(last_url, ccount):
             #print(json.dumps(seen_list, indent=4))
             #print("Not Seen")
             #print(json.dumps(targets["links"], indent=4))
-            difference_in_found = set([ComparableUrl(url) for url in targets["links"]])-set([ComparableUrl(url) for url in seen_list])
+            difference_in_found = set([ComparableUrl(link_url, url) for link_url in targets["links"]])-set([ComparableUrl(link_url, url) for link_url in seen_list])
             #print("Difference")
             #print(json.dumps([a.url for a in difference_in_found], indent=4))
             to_do.extend([a.url for a in difference_in_found])
@@ -91,3 +108,4 @@ def initialise_crawl(last_url, ccount):
 
 initialise_crawl("", 0)
 print(json.dumps(crawl_result, indent=4))
+print(json.dumps(total_fuzz, indent=4))
