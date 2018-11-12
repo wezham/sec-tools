@@ -69,3 +69,5 @@ TO-DO:
 1. Map open ports for hosts 
 2. Javascript application scraping (implement puppetter python libary ) 
 3. Threading for workload perf improvements 
+4. Extracting get paramters 
+5. Smart extraction on paramters with interesting names ( url, ip, etc ) i.e. can we make signatures 
