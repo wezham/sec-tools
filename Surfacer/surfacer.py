@@ -9,36 +9,19 @@ import pdb
 import re
 
 total_fuzz = []
+
 class ComparableUrl:
-    def __init__(self, url, base):
-        self.url = self.edit_url(url, base)
+    def __init__(self, url):
+        self.url = url
     def __eq__(self, other):
-        me = urlparse(self.url)
-        other_one = urlparse(other.url)
-        try:
-            if self.url == "#":
-                return False
-            fuzz_brah = fuzz.ratio(self.url, other.url)
-            total_fuzz.append(fuzz_brah)
-            if fuzz_brah > 60 and root_asset in self.url:
-                return True
-            else:
-                print(self.url)
-                return False
-        except:
-            print("Exception")
-            return True
+        self.url == other.url
+
+    def __ne__(self, other):
+        return (self.url != other.url) or (self.url != other.url)
+
     def __hash__(self):
         return hash(self.url)
 
-    def edit_url(self, url, base):
-        if re.match(r'^/.*', url) != None:
-            if re.match(r'.*/$', base) != None and re.match(r'^/', url) != None:
-                replaced = url.replace("/", "")
-                url = base + replaced
-            else:
-                url = base + url
-        return url
 
 if len(sys.argv) == 1:
     print("Usage python surfacer.py [URL] [ROOT] [MAXCRAWLCOUNT]")
@@ -73,6 +56,28 @@ def find_forms_and_links(soup):
     #print(json.dumps(targets, indent=4))
     return targets
 
+def clean_links(links, base):
+    result = []
+    for link in links:
+        link = edit_url(link, base)
+        if root_asset not in link or '#' in link:
+            continue
+        result.append(link)
+    set_result = set(result)
+    list_result = list(set_result)
+    return list_result
+
+def edit_url(url, base):
+    try:
+        if re.match(r'^/.*', url) != None:
+            if re.match(r'.*/$', base) != None and re.match(r'^/', url) != None:
+                replaced = url.replace("/", "")
+                url = base + replaced
+            else:
+                url = base + url
+    except:
+        print("GIANT FUCKUP")
+    return url
 
 def initialise_crawl(last_url, ccount):
     if len(to_do) > 0 and ccount <= int(max_crawl_count):
@@ -83,28 +88,24 @@ def initialise_crawl(last_url, ccount):
             url = last_url + url
         print(f"Crawling {url}")
         try:
+            global base_url
+            base_url =  url
             result = requests.get(url)
             soup = BeautifulSoup(result.content)
             targets = find_forms_and_links(soup)
             crawl_result[url] = targets
-            #print("Seen List")
-            #print(json.dumps(seen_list, indent=4))
-            #print("Not Seen")
-            #print(json.dumps(targets["links"], indent=4))
-            difference_in_found = set([ComparableUrl(link_url, url) for link_url in targets["links"]])-set([ComparableUrl(link_url, url) for link_url in seen_list])
-            #print("Difference")
-            #print(json.dumps([a.url for a in difference_in_found], indent=4))
-            to_do.extend([a.url for a in difference_in_found])
-            #print("To do")
-            #print(json.dumps(to_do, indent=4))
+            links = clean_links(targets["links"], base_url)
+            new_links = set([ComparableUrl(new_link) for new_link in links])
+            seen_links = set([ComparableUrl(link_url2) for link_url2 in seen_list])
+            union_list = new_links - seen_links
+            to_do.extend([a.url for a in union_list])
+            print("To do")
+            print(json.dumps(to_do, indent=4))
             time.sleep(1)
             initialise_crawl(url, ccount+1)
         except:
             failed_to_crawl.append(url)
             initialise_crawl(url, ccount+1)
-
-
-
 
 initialise_crawl("", 0)
 print(json.dumps(crawl_result, indent=4))
