@@ -4,10 +4,14 @@ import sys
 import json
 import time
 import socket
+import argparse
 from fuzzywuzzy import fuzz
 from urllib.parse import urlparse
 import pdb
 import re
+
+
+
 
 total_fuzz = []
 
@@ -29,7 +33,7 @@ if len(sys.argv) == 1:
     exit()
 
 class AssetCrawler:
-    def __init__(self, starting_url, root_asset, max_crawl_count, debug):
+    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host):
         self.starting_url = starting_url
         self.root_asset = root_asset
         self.max_crawl_count = max_crawl_count
@@ -39,6 +43,7 @@ class AssetCrawler:
         self.seen_list = [starting_url]
         self.hosts = {}
         self.debug = debug
+        self.get_hosts = get_host
 
     def find_forms_and_links(self, url, soup):
         forms = soup.find_all("form")
@@ -70,16 +75,19 @@ class AssetCrawler:
             link = self.edit_url(link, base)
             if self.root_asset not in link or '#' in link:
                 continue
-            if "http" not in link:
-                link = "https://" + link
-            base = urlparse(link).netloc
-            if not base in hosts:
-                hosts[base] = socket.gethostbyname(base)
+            
+            if self.get_hosts:
+                if "http" not in link:
+                    link = "https://" + link
+                base = urlparse(link).netloc
+                if not base in hosts:
+                    hosts[base] = socket.gethostbyname(base)
 
             result.append(link)
         set_result = set(result)
         list_result = list(set_result)
-        self.add_to_hosts(hosts)
+        if self.get_hosts:
+            self.add_to_hosts(hosts)
         return list_result
 
     def add_to_hosts(self, hosts_to_add):
@@ -120,7 +128,7 @@ class AssetCrawler:
             try:
                 base_url =  url
                 result = requests.get(url)
-                soup = BeautifulSoup(result.content)
+                soup = BeautifulSoup(result.content, "html.parser")
                 target_json = self.find_forms_and_links(url=url, soup=soup)
                 self.add_to_crawl_list(target_json=target_json, base_url=base_url)
                 if self.debug == True:
@@ -145,20 +153,23 @@ class AssetCrawler:
         print("-------------------------------------------------------")
         print(json.dumps(self.hosts, indent=4))
 
-for i in range(1,5):
-    if not sys.argv[i]:
-        print("python surfacer.py [STARTING_URL] [ROOT_HOST] [MAX_CRAWL] [DEBUG]")
-        exit()
 
-starting_url = sys.argv[1]
-root_asset = sys.argv[2]
-max_crawl = sys.argv[3]
-debug = True if int(sys.argv[4]) else False 
-print(f"Crawling from {starting_url}")
-print(f"Host is {root_asset}")
-print(f"Max Crawl count is {max_crawl}")
-print(f"Debug Mode: {'Enabled' if debug else 'Disabled'}")
-assetCrawler = AssetCrawler(starting_url=starting_url, root_asset=root_asset, max_crawl_count=max_crawl, debug=debug)
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-gh", "--gethosts", dest = "gethosts", default = 1, help="Get hosts", type=int)
+parser.add_argument("-d", "--debug", dest = "debug", default = 0, help="Debug flag", type=int)
+parser.add_argument("-mc", "--maxcrawl", dest = "max", default = 5, help="Max Crawl Count", type=int)
+parser.add_argument("-u", "--startingurl", dest = "url", default = "www.example.com", help="Starting URL", required=True)
+parser.add_argument("-hs", "--hostname", dest = "host", default = "example", help="Root Host",required=True)
+args = parser.parse_args()
+
+print(f"Crawling from {args.url}")
+print(f"Host is {args.host}")
+print(f"Max Crawl count is {args.max}")
+print(f"Debug Mode: {'Enabled' if args.debug else 'Disabled'}")
+print(f"GetHosts: {'Enabled' if args.gethosts else 'Disabled'}")
+
+assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug)
 assetCrawler.initialise_crawl("", 0)
 assetCrawler.print_crawl_result()
 
