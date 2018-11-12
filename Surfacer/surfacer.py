@@ -1,14 +1,18 @@
 from bs4 import BeautifulSoup
+from fuzzywuzzy import fuzz
+from urllib.parse import urlparse
+from pyppeteer import launch
 import requests
 import sys
 import json
 import time
 import socket
 import argparse
-from fuzzywuzzy import fuzz
-from urllib.parse import urlparse
 import pdb
 import re
+import asyncio
+
+
 
 
 total_fuzz = []
@@ -147,6 +151,27 @@ class AssetCrawler:
         print("-------------------------------------------------------")
         print(json.dumps(self.hosts, indent=4))
 
+    async def get_web_page_js(self, url):
+        browser = await launch()
+        page = await browser.newPage()
+        await page.goto(url)
+        forms = await page.querySelector('form')
+
+
+        dimensions = await page.evaluate('''() => {
+            return {
+                width: document.documentElement.clientWidth,
+                height: document.documentElement.clientHeight,
+                deviceScaleFactor: window.devicePixelRatio,
+            }
+        }''')
+
+        print(dimensions)
+        print(forms)
+        # >>> {'width': 800, 'height': 600, 'deviceScaleFactor': 1}
+        await browser.close()
+
+        asyncio.get_event_loop().run_until_complete(self.get_web_page_js(url))
 
 
 parser = argparse.ArgumentParser()
@@ -164,7 +189,8 @@ print(f"Debug Mode: {'Enabled' if args.debug else 'Disabled'}")
 print(f"GetHosts: {'Enabled' if args.gethosts else 'Disabled'}")
 
 assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug)
-assetCrawler.initialise_crawl("", 0)
-assetCrawler.print_crawl_result()
+#assetCrawler.initialise_crawl("", 0)
+#assetCrawler.print_crawl_result()
 
+pdb.set_trace()
 # if sys.argv.get(1, "NEIN") == "NEIN" or
