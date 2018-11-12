@@ -17,7 +17,7 @@ usage: surfacer.py [-h] [-gh GETHOSTS] [-d DEBUG] [-mc MAX] -u URL -hs HOST
 Features:
 
 1. Returns a JSON blob of 
-
+```
 targets = {
   "sampleurl": {
     "forms": {
@@ -63,7 +63,7 @@ hosts: {
   "URL1": "127.0.0.1",
   "URL2": "127.0.0.2"
 }
-
+```
 TO-DO:
 
 1. Map open ports for hosts 
