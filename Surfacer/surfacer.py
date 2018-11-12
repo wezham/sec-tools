@@ -11,8 +11,6 @@ import pdb
 import re
 
 
-
-
 total_fuzz = []
 
 class ComparableUrl:
@@ -27,10 +25,6 @@ class ComparableUrl:
     def __hash__(self):
         return hash(self.url)
 
-
-if len(sys.argv) == 1:
-    print("Usage python surfacer.py [URL] [ROOT] [MAXCRAWLCOUNT]")
-    exit()
 
 class AssetCrawler:
     def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host):
