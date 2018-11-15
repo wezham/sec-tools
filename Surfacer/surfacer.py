@@ -1,17 +1,18 @@
 from bs4 import BeautifulSoup
+from fuzzywuzzy import fuzz
+from urllib.parse import urlparse
+from pyppeteer import launch
 import requests
 import sys
 import json
 import time
 import socket
 import argparse
-from fuzzywuzzy import fuzz
-from urllib.parse import urlparse
 import pdb
 import asyncio
 import aiohttp
 import re
-
+import asyncio
 
 total_fuzz = []
 
@@ -70,14 +71,16 @@ class AssetCrawler:
         result = []
         hosts = {}
         for link in links:
+            if self.debug:
+                print(f"Possbily adding link {link}")
             link = self.edit_url(link, base)
-            if self.root_asset not in link or '#' in link:
+            if not link or (self.root_asset not in urlparse(link).netloc or '#' in link):
                 continue
-            
+            if "http" not in link:
+                link = "https://" + link
+            #pdb.set_trace()
+            base = urlparse(link).netloc
             if self.get_hosts:
-                if "http" not in link:
-                    link = "https://" + link
-                base = urlparse(link).netloc
                 if not base in hosts:
                     hosts[base] = socket.gethostbyname(base)
 
@@ -88,22 +91,30 @@ class AssetCrawler:
             self.add_to_hosts(hosts)
         return list_result
 
+    
+
     def add_to_hosts(self, hosts_to_add):
         for key in hosts_to_add.keys(): 
             if key not in self.hosts:
                 self.hosts[key] = hosts_to_add.get(key)
 
+    def __starts_with_slash(self, url):
+        return re.match(r'^/.*', url)
+    
+    def __ends_with_slash(self, url):
+        return re.match(r'.*/$', url) 
+
     def edit_url(self, url, base):
         try:
-            if re.match(r'^/.*', url) != None:
-                if re.match(r'.*/$', base) != None and re.match(r'^/', url) != None:
+            if url and self.__starts_with_slash(url) != None:
+                if self.__ends_with_slash(base):
                     replaced = url.replace("/", "")
                     url = base + replaced
                 else:
                     url = base + url
         except:
             print(f"Error using url: {url}, base: {base}")
-        return url
+        return False if not url else url
 
     def add_to_crawl_list(self, target_json, base_url):
         links = self.clean_links(target_json["links"], base_url)
@@ -161,6 +172,27 @@ class AssetCrawler:
         print("-------------------------------------------------------")
         print(json.dumps(self.hosts, indent=4))
 
+    async def get_web_page_js(self, url):
+        browser = await launch()
+        page = await browser.newPage()
+        await page.goto(url)
+        forms = await page.querySelector('form')
+
+
+        dimensions = await page.evaluate('''() => {
+            return {
+                width: document.documentElement.clientWidth,
+                height: document.documentElement.clientHeight,
+                deviceScaleFactor: window.devicePixelRatio,
+            }
+        }''')
+
+        print(dimensions)
+        print(forms)
+        # >>> {'width': 800, 'height': 600, 'deviceScaleFactor': 1}
+        await browser.close()
+
+        asyncio.get_event_loop().run_until_complete(self.get_web_page_js(url))
 
 
 parser = argparse.ArgumentParser()
@@ -186,4 +218,5 @@ loop.close()
 session.close()
 assetCrawler.print_crawl_result()
 
+pdb.set_trace()
 # if sys.argv.get(1, "NEIN") == "NEIN" or
