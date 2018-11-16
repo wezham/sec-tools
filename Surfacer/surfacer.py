@@ -9,8 +9,6 @@ import time
 import socket
 import argparse
 import pdb
-import asyncio
-import aiohttp
 import re
 import asyncio
 
@@ -30,7 +28,7 @@ class ComparableUrl:
 
 
 class AssetCrawler:
-    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host, session, loop):
+    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host):
         self.starting_url = starting_url
         self.root_asset = root_asset
         self.max_crawl_count = max_crawl_count
@@ -41,8 +39,6 @@ class AssetCrawler:
         self.hosts = {}
         self.debug = debug
         self.get_hosts = get_host
-        self.session = session
-        self.loop = loop
 
     def find_forms_and_links(self, url, soup):
         forms = soup.find_all("form")
@@ -122,13 +118,8 @@ class AssetCrawler:
         seen_links = set([ComparableUrl(link_url2) for link_url2 in self.seen_list])
         union_list = new_links - seen_links
         self.to_do.extend([a.url for a in union_list])
-    
-    async def __get_content(self, url):
-        async with self.session.get(url) as resp:
-            assert resp.text()
-            return await resp.text(), url
 
-    async def initialise_crawl(self, last_url, ccount):
+    def initialise_crawl(self, last_url, ccount):
         if len(self.to_do) > 0 and ccount <= int(self.max_crawl_count):
             url = self.to_do.pop()
             #print(f"Last URL {last_url}")
@@ -141,8 +132,8 @@ class AssetCrawler:
                 print("-------------------------------------------------------")
             try:
                 base_url =  url
-                result, url = await asyncio.ensure_future(self.__get_content(url))
-                soup = BeautifulSoup(result, "html.parser")
+                result = requests.get(url)
+                soup = BeautifulSoup(result.content, "html.parser")
                 target_json = self.find_forms_and_links(url=url, soup=soup)
                 self.add_to_crawl_list(target_json=target_json, base_url=base_url)
                 if self.debug == True:
@@ -151,19 +142,14 @@ class AssetCrawler:
                     print(json.dumps(self.to_do, indent=4))
                     print("-------------------------------------------------------")
                 time.sleep(1)
-                await self.initialise_crawl(url, ccount+1)
+                self.initialise_crawl(url, ccount+1)
             except:
                 if self.debug == True:
                     print("-------------------------------------------------------")
                     print(f"Failed to crawl {url}")
                     print("-------------------------------------------------------")
                 self.failed_to_crawl.append(url)
-                await self.initialise_crawl(url, ccount+1)
-        else:
-            print("Stopping loop")
-            time.sleep(4)
-            self.session.close()
-            self.loop.stop()
+                self.initialise_crawl(url, ccount+1)
             
     def print_crawl_result(self):
         print("URLS:")
@@ -209,13 +195,8 @@ print(f"Max Crawl count is {args.max}")
 print(f"Debug Mode: {'Enabled' if args.debug else 'Disabled'}")
 print(f"GetHosts: {'Enabled' if args.gethosts else 'Disabled'}")
 
-loop = asyncio.get_event_loop()
-session = aiohttp.ClientSession(conn_timeout=1, read_timeout=3, loop=loop)
-assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug, session=session, loop=loop)
-asyncio.ensure_future(assetCrawler.initialise_crawl("", 0))
-loop.run_forever()
-loop.close()
-session.close()
+assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug)
+assetCrawler.initialise_crawl("", 0)
 assetCrawler.print_crawl_result()
 
 pdb.set_trace()
