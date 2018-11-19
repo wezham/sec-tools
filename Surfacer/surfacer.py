@@ -11,6 +11,10 @@ import argparse
 import pdb
 import re
 import asyncio
+import logging
+import aiohttp
+import async_timeout
+
 
 total_fuzz = []
 
@@ -20,15 +24,12 @@ class ComparableUrl:
     def __eq__(self, other):
         self.url == other.url
 
-    def __ne__(self, other):
-        return (self.url != other.url) or (self.url != other.url)
-
     def __hash__(self):
         return hash(self.url)
 
 
 class AssetCrawler:
-    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host):
+    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host, loop):
         self.starting_url = starting_url
         self.root_asset = root_asset
         self.max_crawl_count = max_crawl_count
@@ -39,6 +40,8 @@ class AssetCrawler:
         self.hosts = {}
         self.debug = debug
         self.get_hosts = get_host
+        self.loop = loop
+        self.session = aiohttp.ClientSession(loop=self.loop)
 
     def find_forms_and_links(self, url, soup):
         forms = soup.find_all("form")
@@ -58,7 +61,7 @@ class AssetCrawler:
 
         try:
             self.crawl_result[url] = target_json
-        except:
+        except Exception:
             print(f"Failed to add target info for {url}")
 
         return target_json
@@ -108,7 +111,7 @@ class AssetCrawler:
                     url = base + replaced
                 else:
                     url = base + url
-        except:
+        except Exception:
             print(f"Error using url: {url}, base: {base}")
         return False if not url else url
 
@@ -119,37 +122,62 @@ class AssetCrawler:
         union_list = new_links - seen_links
         self.to_do.extend([a.url for a in union_list])
 
-    def initialise_crawl(self, last_url, ccount):
-        if len(self.to_do) > 0 and ccount <= int(self.max_crawl_count):
-            url = self.to_do.pop()
-            #print(f"Last URL {last_url}")
-            if "http" not in url:
-                url = url.replace("/", "")
-                url = last_url + url
-            if self.debug == True:
-                print("-------------------------------------------------------")
-                print(f"Crawling {url}")
-                print("-------------------------------------------------------")
-            try:
-                base_url =  url
-                result = requests.get(url)
-                soup = BeautifulSoup(result.content, "html.parser")
-                target_json = self.find_forms_and_links(url=url, soup=soup)
-                self.add_to_crawl_list(target_json=target_json, base_url=base_url)
-                if self.debug == True:
-                    print("Links to Crawl:")
-                    print("-------------------------------------------------------")
-                    print(json.dumps(self.to_do, indent=4))
-                    print("-------------------------------------------------------")
-                time.sleep(1)
-                self.initialise_crawl(url, ccount+1)
-            except:
-                if self.debug == True:
-                    print("-------------------------------------------------------")
-                    print(f"Failed to crawl {url}")
-                    print("-------------------------------------------------------")
-                self.failed_to_crawl.append(url)
-                self.initialise_crawl(url, ccount+1)
+    def handle_result(self, result, base_url):
+        try:
+            target_json = self.find_forms_and_links(url=base_url, soup=BeautifulSoup(result.content, "html.parser"))
+        except Exception:
+            logging.debug(f"Error extracing forms and links for {base_url}, StatusCode: {result.status_code}")
+            raise
+        try:
+            self.add_to_crawl_list(target_json=target_json, base_url=base_url)
+        except Exception:
+            logging.debug(f"Error adding to crawl List for {base_url}, json is {target_json}")
+            raise
+
+    async def get(self, url):
+        with async_timeout.timeout(5):
+            async with self.session.get(url) as response:
+                return await response.text()
+
+    async def crawl(self, url, depth=0):
+        result = await self.get(url)
+        try: 
+            self.handle_result(result, url)
+            if depth <= self.max_crawl_count:
+                await asyncio.gather([self.crawl(link, depth+1) for link in self.to_do])
+        except Exception:
+            logging.debug(f"Failed to crawl {url}")
+            self.failed_to_crawl.append(url)
+            return False
+
+        return True
+
+    # def initialise_crawl(self, ccount=0):
+    #     if len(self.to_do) > 0 and ccount <= int(self.max_crawl_count):
+    #         url = self.to_do.pop()
+    #         logging.debug(f"Crawling {url}")
+    #         try:
+    #             base_url =  url
+    #             result = requests.get(url)
+    #             try:
+    #                 self.handle_result(result=result, base_url=base_url)
+    #             except: 
+    #                 print("yas")
+
+    #             if self.debug == True:
+    #                 print("Links to Crawl:")
+    #                 print("-------------------------------------------------------")
+    #                 print(json.dumps(self.to_do, indent=4))
+    #                 print("-------------------------------------------------------")
+    #             time.sleep(1)
+    #             self.initialise_crawl(ccount+1)
+    #         except Exception:
+    #             if self.debug == True:
+    #                 print("-------------------------------------------------------")
+    #                 print(f"Failed to crawl {url}")
+    #                 print("-------------------------------------------------------")
+    #             self.failed_to_crawl.append(url)
+    #             self.initialise_crawl(ccount+1)
             
     def print_crawl_result(self):
         print("URLS:")
@@ -195,9 +223,13 @@ print(f"Max Crawl count is {args.max}")
 print(f"Debug Mode: {'Enabled' if args.debug else 'Disabled'}")
 print(f"GetHosts: {'Enabled' if args.gethosts else 'Disabled'}")
 
-assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug)
-assetCrawler.initialise_crawl("", 0)
-assetCrawler.print_crawl_result()
+loop = asyncio.get_event_loop()
+asset_crawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug, loop=loop)
+loop.run_until_complete(asset_crawler.crawl(args.url))
+asset_crawler.print_crawl_result()
 
-pdb.set_trace()
-# if sys.argv.get(1, "NEIN") == "NEIN" or
+
+## TO DO: 
+# Logging
+# Better exception handling - shrink number of possible erros in exception blocks
+#  
