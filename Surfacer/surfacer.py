@@ -124,9 +124,9 @@ class AssetCrawler:
 
     def handle_result(self, result, base_url):
         try:
-            target_json = self.find_forms_and_links(url=base_url, soup=BeautifulSoup(result.content, "html.parser"))
+            target_json = self.find_forms_and_links(url=base_url, soup=BeautifulSoup(result, "html.parser"))
         except Exception:
-            logging.debug(f"Error extracing forms and links for {base_url}, StatusCode: {result.status_code}")
+            logging.debug(f"Error extracing forms and links for {base_url}")
             raise
         try:
             self.add_to_crawl_list(target_json=target_json, base_url=base_url)
@@ -136,13 +136,14 @@ class AssetCrawler:
 
     async def get(self, url):
         with async_timeout.timeout(5):
-            async with self.session.get(url) as response:
+            async with self.session.get(url, ssl=False) as response:
                 return await response.text()
 
     async def crawl(self, url, depth=0):
-        result = await self.get(url)
+        async with self.session:
+            res = await self.get(url)
         try: 
-            self.handle_result(result, url)
+            self.handle_result(res, url)
             if depth <= self.max_crawl_count:
                 await asyncio.gather([self.crawl(link, depth+1) for link in self.to_do])
         except Exception:
