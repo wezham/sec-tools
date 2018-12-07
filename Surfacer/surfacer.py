@@ -11,6 +11,10 @@ import argparse
 import pdb
 import re
 import asyncio
+import logging
+import aiohttp
+import async_timeout
+
 
 total_fuzz = []
 
@@ -20,27 +24,26 @@ class ComparableUrl:
     def __eq__(self, other):
         self.url == other.url
 
-    def __ne__(self, other):
-        return (self.url != other.url) or (self.url != other.url)
-
     def __hash__(self):
         return hash(self.url)
 
 
 class AssetCrawler:
-    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host):
+    def __init__(self, starting_url, root_asset, max_crawl_count, debug, get_host, loop):
         self.starting_url = starting_url
         self.root_asset = root_asset
         self.max_crawl_count = max_crawl_count
         self.failed_to_crawl = []
-        self.to_do = [starting_url]
+        self.to_do = []
         self.crawl_result = {}
-        self.seen_list = [starting_url]
+        self.seen_list = {starting_url}
         self.hosts = {}
         self.debug = debug
         self.get_hosts = get_host
+        self.loop = loop
 
     def find_forms_and_links(self, url, soup):
+        
         forms = soup.find_all("form")
         target_json = { "forms": {}, "links": []}
         for form in forms:
@@ -53,46 +56,37 @@ class AssetCrawler:
                 target_json["forms"][target]["params"].append({ "name": input.get('name'), "type": input.get("type")})
 
         links = soup.find_all("a")
+       
         for link in links:
-            target_json["links"].append(link.get("href"))
+            link = self.clean_link(link=link.get("href"), base=url)
+            target_json["links"].append(link) if link else False 
 
         try:
             self.crawl_result[url] = target_json
-        except:
+        except Exception:
             print(f"Failed to add target info for {url}")
 
         return target_json
 
-    def clean_links(self, links, base):
-        result = []
-        hosts = {}
-        for link in links:
-            if self.debug:
-                print(f"Possbily adding link {link}")
-            link = self.edit_url(link, base)
-            if not link or (self.root_asset not in urlparse(link).netloc or '#' in link):
-                continue
-            if "http" not in link:
-                link = "https://" + link
-            #pdb.set_trace()
-            base = urlparse(link).netloc
-            if self.get_hosts:
-                if not base in hosts:
-                    hosts[base] = socket.gethostbyname(base)
+    def clean_link(self, link, base):
+        link = self.edit_url(link, base)
 
-            result.append(link)
-        set_result = set(result)
-        list_result = list(set_result)
-        if self.get_hosts:
-            self.add_to_hosts(hosts)
-        return list_result
-
+        if not link or (self.root_asset not in urlparse(link).netloc or '#' in link):
+            return False
     
+        parsed = urlparse(link)
+        parsed_link = parsed.netloc
+        path = parsed.path if parsed.path else ""
+        return_link = "https://" + parsed_link + path
 
-    def add_to_hosts(self, hosts_to_add):
-        for key in hosts_to_add.keys(): 
-            if key not in self.hosts:
-                self.hosts[key] = hosts_to_add.get(key)
+        if self.get_hosts:
+            if not parsed_link in self.hosts:
+                try:
+                    self.hosts[parsed_link] = socket.gethostbyname(parsed_link)
+                except Exception:
+                    print(f"Error with hosts for {parsed_link}")
+
+        return return_link
 
     def __starts_with_slash(self, url):
         return re.match(r'^/.*', url)
@@ -108,52 +102,64 @@ class AssetCrawler:
                     url = base + replaced
                 else:
                     url = base + url
-        except:
+        except Exception:
             print(f"Error using url: {url}, base: {base}")
         return False if not url else url
 
     def add_to_crawl_list(self, target_json, base_url):
-        links = self.clean_links(target_json["links"], base_url)
-        new_links = set([ComparableUrl(new_link) for new_link in links])
-        seen_links = set([ComparableUrl(link_url2) for link_url2 in self.seen_list])
+        pdb.set_trace()
+        new_links = set([new_link for new_link in target_json["links"]])
+        seen_links = self.seen_list
         union_list = new_links - seen_links
-        self.to_do.extend([a.url for a in union_list])
+        return union_list
 
-    def initialise_crawl(self, last_url, ccount):
-        if len(self.to_do) > 0 and ccount <= int(self.max_crawl_count):
-            url = self.to_do.pop()
-            #print(f"Last URL {last_url}")
-            if "http" not in url:
-                url = url.replace("/", "")
-                url = last_url + url
-            if self.debug == True:
-                print("-------------------------------------------------------")
-                print(f"Crawling {url}")
-                print("-------------------------------------------------------")
-            try:
-                base_url =  url
-                result = requests.get(url)
-                soup = BeautifulSoup(result.content, "html.parser")
-                target_json = self.find_forms_and_links(url=url, soup=soup)
-                self.add_to_crawl_list(target_json=target_json, base_url=base_url)
-                if self.debug == True:
-                    print("Links to Crawl:")
-                    print("-------------------------------------------------------")
-                    print(json.dumps(self.to_do, indent=4))
-                    print("-------------------------------------------------------")
-                time.sleep(1)
-                self.initialise_crawl(url, ccount+1)
-            except:
-                if self.debug == True:
-                    print("-------------------------------------------------------")
-                    print(f"Failed to crawl {url}")
-                    print("-------------------------------------------------------")
-                self.failed_to_crawl.append(url)
-                self.initialise_crawl(url, ccount+1)
-            
+    def handle_result(self, result, base_url):
+        try:
+            target_json = self.find_forms_and_links(url=base_url, soup=BeautifulSoup(result, "html.parser"))
+        except Exception:
+           print(f"Error extracing forms and links for {base_url}")
+           raise
+        try:
+            return self.add_to_crawl_list(target_json=target_json, base_url=base_url)
+        except Exception:
+            print(f"Error adding to crawl List for {base_url}, json is {target_json}")
+            raise
+
+    async def get(self, url):
+        response = await self.session.get(url, ssl=False)
+        return await response.text()
+
+    async def crawl(self, url, depth=0):
+        print(f"Actually crawling {url}")
+        print(f"Depth {depth}")
+        time.sleep(1)
+        self.seen_list.add(url)
+        res = await self.get(url)
+        try: 
+            pdb.set_trace()
+            to_do = self.handle_result(res, url)
+        except Exception:
+           print(f"Failed to crawl {url}")
+           self.failed_to_crawl.append(url)
+           return False
+        else:
+            if depth <= self.max_crawl_count:
+                await asyncio.gather( *([self.crawl(link, depth+index) for index, link in enumerate(to_do) ]) )
+
+       
+
+    def get_item(self, item):
+        return item
+
+    async def main(self, url):
+        async with aiohttp.ClientSession(loop=self.loop) as session:
+            self.session = session
+            result = await self.crawl(url)
+            return result
+
     def print_crawl_result(self):
         print("URLS:")
-        print(json.dumps(self.crawl_result, indent=4))
+        json.dumps(self.crawl_result, indent=4)
         print("HOSTS:")
         print("-------------------------------------------------------")
         print(json.dumps(self.hosts, indent=4))
@@ -195,9 +201,13 @@ print(f"Max Crawl count is {args.max}")
 print(f"Debug Mode: {'Enabled' if args.debug else 'Disabled'}")
 print(f"GetHosts: {'Enabled' if args.gethosts else 'Disabled'}")
 
-assetCrawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug)
-assetCrawler.initialise_crawl("", 0)
-assetCrawler.print_crawl_result()
+loop = asyncio.get_event_loop()
+asset_crawler = AssetCrawler(starting_url=args.url, root_asset=args.host, max_crawl_count=args.max, get_host=args.gethosts, debug=args.debug, loop=loop)
+loop.run_until_complete(asset_crawler.main(args.url))
+asset_crawler.print_crawl_result()
 
-pdb.set_trace()
-# if sys.argv.get(1, "NEIN") == "NEIN" or
+
+## TO DO: 
+# Logging
+# Better exception handling - shrink number of possible erros in exception blocks
+#  
